@@ -1,1 +1,300 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visor de Base de Datos</title>
+    
+    <!-- Tailwind CSS para el diseño -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- FontAwesome para los íconos -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Librerías para leer CSV (PapaParse) y exportar a Excel (SheetJS) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen p-2 md:p-4">
 
+    <div class="w-full mx-auto space-y-4">
+        
+        <!-- Cabecera -->
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-4 md:p-6 rounded-2xl shadow-sm border border-slate-100 gap-4">
+            <div class="flex items-center gap-3">
+                <div class="p-3 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center w-12 h-12 shrink-0">
+                    <i class="fa-solid fa-table text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl md:text-2xl font-bold text-slate-900">Visor de Base de Datos</h1>
+                    <p class="text-xs md:text-sm text-slate-500">Visualiza y exporta tu Google Sheet directamente</p>
+                </div>
+            </div>
+            
+            <div class="flex w-full md:w-auto gap-3">
+                <button id="btnActualizar" onclick="fetchData()" class="flex items-center justify-center gap-2 px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg transition-colors font-medium text-sm w-full md:w-auto">
+                    <i id="iconoActualizar" class="fa-solid fa-rotate-right"></i>
+                    <span>Actualizar Datos</span>
+                </button>
+                <button id="btnExportar" onclick="exportToExcel()" disabled class="flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-colors font-medium text-sm w-full md:w-auto shadow-sm bg-slate-100 text-slate-400 cursor-not-allowed">
+                    <i class="fa-solid fa-file-excel"></i>
+                    <span>Exportar Excel</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Alertas -->
+        <div id="alertaError" class="hidden bg-red-50 text-red-700 p-4 rounded-xl flex items-start gap-3 border border-red-100">
+            <i class="fa-solid fa-circle-exclamation mt-1"></i>
+            <p id="textoError" class="text-sm"></p>
+        </div>
+
+        <div id="alertaExito" class="hidden bg-blue-50 text-blue-700 p-4 rounded-xl flex items-start gap-3 border border-blue-100">
+            <i class="fa-solid fa-circle-info mt-1"></i>
+            <p id="textoExito" class="text-sm font-medium"></p>
+        </div>
+
+        <!-- Tabla de Datos -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden flex flex-col h-[calc(100vh-140px)] min-h-[400px] relative">
+            <div class="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 shrink-0">
+                <h2 class="font-semibold text-slate-700 text-sm">Registros (Ordenados por fecha)</h2>
+                <span id="contadorRegistros" class="text-xs font-medium px-2.5 py-1 bg-white border border-slate-200 rounded-full text-slate-500">
+                    0 registros
+                </span>
+            </div>
+            
+            <!-- Loader -->
+            <div id="loader" class="absolute inset-0 top-[60px] flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm z-20">
+                <i class="fa-solid fa-rotate-right animate-spin text-blue-600 text-3xl mb-4"></i>
+                <p class="text-slate-500 font-medium">Conectando con Google Sheets...</p>
+            </div>
+
+            <!-- Estado Vacío -->
+            <div id="estadoVacio" class="hidden h-full flex flex-col items-center justify-center text-slate-400 p-12 space-y-4">
+                <i class="fa-solid fa-database text-5xl opacity-20"></i>
+                <p class="text-center">No hay datos para mostrar.<br/>Revisa que el Google Sheet tenga información y sea público.</p>
+            </div>
+
+            <div class="overflow-auto flex-1 relative hidden" id="contenedorTabla">
+                <table class="w-full text-left table-auto">
+                    <thead class="text-[10px] md:text-xs text-slate-500 uppercase sticky top-0 z-10 shadow-sm ring-1 ring-slate-200 bg-slate-100" id="cabeceraTabla">
+                        <!-- Cabeceras generadas por JS -->
+                    </thead>
+                    <tbody class="divide-y divide-slate-100" id="cuerpoTabla">
+                        <!-- Filas generadas por JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // ID del Sheet Único
+        const sheetId = '1kv4P5MTu48Wj8BXuV4U4wJy-NbltFYLgXWmgxCl8GS0';
+        let globalData = [];
+        let globalHeaders = [];
+
+        // Elementos del DOM
+        const btnActualizar = document.getElementById('btnActualizar');
+        const iconoActualizar = document.getElementById('iconoActualizar');
+        const btnExportar = document.getElementById('btnExportar');
+        const alertaError = document.getElementById('alertaError');
+        const textoError = document.getElementById('textoError');
+        const alertaExito = document.getElementById('alertaExito');
+        const textoExito = document.getElementById('textoExito');
+        const loader = document.getElementById('loader');
+        const contenedorTabla = document.getElementById('contenedorTabla');
+        const estadoVacio = document.getElementById('estadoVacio');
+        const cabeceraTabla = document.getElementById('cabeceraTabla');
+        const cuerpoTabla = document.getElementById('cuerpoTabla');
+        const contadorRegistros = document.getElementById('contadorRegistros');
+
+        // Función para mostrar mensajes
+        function mostrarError(mensaje) {
+            textoError.innerText = mensaje;
+            alertaError.classList.remove('hidden');
+            alertaExito.classList.add('hidden');
+        }
+
+        function mostrarExito(mensaje, ocultarDespues = false) {
+            textoExito.innerText = mensaje;
+            alertaExito.classList.remove('hidden');
+            alertaError.classList.add('hidden');
+            if(ocultarDespues) {
+                setTimeout(() => alertaExito.classList.add('hidden'), 3000);
+            }
+        }
+
+        function ocultarAlertas() {
+            alertaError.classList.add('hidden');
+            alertaExito.classList.add('hidden');
+        }
+
+        // Función para leer el Sheet individual
+        function fetchCSV(sheetId) {
+            return new Promise((resolve, reject) => {
+                const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv`;
+                
+                Papa.parse(url, {
+                    download: true,
+                    header: false,
+                    skipEmptyLines: true,
+                    complete: function(results) {
+                        if (results.data && results.data.length > 0 && results.data[0][0]) {
+                            const firstCellStr = results.data[0][0].toString().toLowerCase();
+                            if (firstCellStr.includes('<!doctype html') || firstCellStr.includes('<html')) {
+                                reject(new Error(`Google bloqueó la lectura. Como estás abriendo el archivo localmente, intenta abrir este HTML en una ventana de Incógnito o verifica que el Sheet sea "Cualquier usuario con el vínculo".`));
+                                return;
+                            }
+                        }
+                        resolve(results.data);
+                    },
+                    error: function(err) {
+                        reject(new Error(`El navegador bloqueó la conexión. Por seguridad, algunos navegadores bloquean archivos locales. Intenta abrir el archivo en Incógnito o usa otro navegador.`));
+                    }
+                });
+            });
+        }
+
+        // Función principal para obtener los datos
+        async function fetchData() {
+            loader.classList.remove('hidden');
+            contenedorTabla.classList.add('hidden');
+            estadoVacio.classList.add('hidden');
+            iconoActualizar.classList.add('animate-spin');
+            btnActualizar.disabled = true;
+            btnActualizar.classList.add('opacity-50');
+            ocultarAlertas();
+
+            try {
+                const rawData = await fetchCSV(sheetId);
+
+                if (rawData.length === 0) {
+                    throw new Error("El documento está vacío.");
+                }
+
+                // Obtener encabezados
+                globalHeaders = rawData[0].map(h => h ? h.toString().trim() : "");
+
+                // Función para dar formato a los datos a JSON
+                const formatData = (rows) => {
+                    const result = [];
+                    for (let i = 1; i < rows.length; i++) {
+                        const rowArray = rows[i];
+                        if (!rowArray || rowArray.every(cell => !cell || cell.toString().trim() === '')) continue;
+
+                        const rowObj = {};
+                        for (let j = 0; j < globalHeaders.length; j++) {
+                            const header = globalHeaders[j] ? globalHeaders[j] : `Columna ${j+1}`;
+                            rowObj[header] = rowArray[j] !== undefined ? rowArray[j] : "";
+                        }
+                        result.push(rowObj);
+                    }
+                    return result;
+                };
+
+                let processedData = formatData(rawData);
+
+                // Ordenar por fecha (si existe la columna "Fecha y Hora")
+                processedData.sort((a, b) => {
+                    const parseDate = (dateStr) => {
+                        if (!dateStr) return 0;
+                        try {
+                            const [datePart, timePart] = dateStr.split(' ');
+                            if (!datePart) return 0;
+                            
+                            const [day, month, year] = datePart.split('/');
+                            if (!day || !month || !year) return 0;
+                            
+                            let hour = 0, minute = 0;
+                            if (timePart) {
+                                const timeParts = timePart.split(':');
+                                hour = parseInt(timeParts[0], 10) || 0;
+                                minute = parseInt(timeParts[1], 10) || 0;
+                            }
+                            return new Date(year, month - 1, day, hour, minute).getTime();
+                        } catch (e) {
+                            return 0;
+                        }
+                    };
+
+                    const dateA = a["Fecha y Hora"] || "";
+                    const dateB = b["Fecha y Hora"] || "";
+                    return parseDate(dateA) - parseDate(dateB);
+                });
+
+                globalData = processedData;
+                renderTable();
+
+            } catch (error) {
+                console.error(error);
+                mostrarError(error.message || "Error de conexión. Asegúrate de tener internet y que el Sheet sea público.");
+                loader.classList.add('hidden');
+                estadoVacio.classList.remove('hidden');
+            } finally {
+                iconoActualizar.classList.remove('animate-spin');
+                btnActualizar.disabled = false;
+                btnActualizar.classList.remove('opacity-50');
+            }
+        }
+
+        // Función para renderizar la tabla en HTML
+        function renderTable() {
+            loader.classList.add('hidden');
+            
+            if (globalData.length === 0) {
+                estadoVacio.classList.remove('hidden');
+                contenedorTabla.classList.add('hidden');
+                btnExportar.disabled = true;
+                btnExportar.className = "flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-colors font-medium text-sm w-full md:w-auto shadow-sm bg-slate-100 text-slate-400 cursor-not-allowed";
+                contadorRegistros.innerText = "0 registros";
+                return;
+            }
+
+            estadoVacio.classList.add('hidden');
+            contenedorTabla.classList.remove('hidden');
+            contadorRegistros.innerText = `${globalData.length} registro${globalData.length !== 1 ? 's' : ''}`;
+            
+            btnExportar.disabled = false;
+            btnExportar.className = "flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-colors font-medium text-sm w-full md:w-auto shadow-sm bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20";
+
+            // Cabeceras
+            cabeceraTabla.innerHTML = `<tr>${globalHeaders.map(h => `<th class="px-2 py-3 font-semibold break-words align-top max-w-[150px]">${h}</th>`).join('')}</tr>`;
+
+            // Filas
+            const htmlFilas = globalData.map(row => {
+                const celdas = globalHeaders.map(header => {
+                    const valor = row[header];
+                    const contenido = (valor !== undefined && valor !== null && valor !== "") ? valor : '<span class="text-slate-300">-</span>';
+                    return `<td class="px-2 py-2 text-xs md:text-sm text-slate-600 break-words align-top max-w-[150px]">${contenido}</td>`;
+                }).join('');
+                return `<tr class="hover:bg-blue-50/60 transition-colors border-b border-slate-50 last:border-0">${celdas}</tr>`;
+            }).join('');
+
+            cuerpoTabla.innerHTML = htmlFilas;
+        }
+
+        // Función para exportar a Excel
+        function exportToExcel() {
+            if (globalData.length === 0) return;
+
+            try {
+                const worksheet = XLSX.utils.json_to_sheet(globalData);
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, "Datos");
+                XLSX.writeFile(workbook, "Base_Datos.xlsx");
+                
+                mostrarExito("¡Archivo Excel exportado con éxito!", true);
+            } catch (error) {
+                mostrarError("Hubo un error al generar el archivo Excel.");
+            }
+        }
+
+        // Cargar datos automáticamente al iniciar
+        window.onload = () => {
+            fetchData();
+        };
+    </script>
+</body>
+</html>
